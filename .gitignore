@@ -1,0 +1,23 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor & IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets & local env
+.env
+.env.*
+*.key
+*.pem
+*secret*
+*token*
+
+# Logs & temp
+*.log
+tmp/
+temp/
