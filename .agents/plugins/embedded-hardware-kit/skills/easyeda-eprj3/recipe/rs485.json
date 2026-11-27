@@ -1,0 +1,275 @@
+{
+  "name": "rs485",
+  "notes": [
+    "MAX485 是 5V 器件，RO 推挽输出接近 5V：3.3V MCU 的 IO 需换 MAX3485/SN65HVD7x 或加电平转换/分压",
+    "120R 终端只在总线两端各焊一个，多点中间节点应做成跳线可选（默认不焊）",
+    "本配方无 fail-safe 偏置：总线空闲时 A/B 电平不定，长总线加 A 上拉 / B 下拉（560R–1k 到 VCC/GND）或选自带 fail-safe 的收发器",
+    "TVS 用 SMBJ6.5CA（双向）更常见于 A/B 差分对；本配方的 SMBJ6.5A 是单向对地，按需替换"
+  ],
+  "board": {
+    "width": 1600,
+    "height": 1000
+  },
+  "sheet": {
+    "schematic": "Schematic1",
+    "name": "P1"
+  },
+  "powers": {
+    "5V": "up",
+    "GND": "down"
+  },
+  "blocks": [
+    {
+      "title": "RS485 TRANSCEIVER",
+      "parts": [
+        "U1",
+        "C1"
+      ]
+    },
+    {
+      "title": "DE PULL-DOWN + LOGIC PORT",
+      "parts": [
+        "R2",
+        "J2"
+      ]
+    },
+    {
+      "title": "TERMINATION + TVS A",
+      "parts": [
+        "R1",
+        "D1"
+      ]
+    },
+    {
+      "title": "TVS B + BUS CONNECTOR",
+      "parts": [
+        "D2",
+        "J1"
+      ]
+    }
+  ],
+  "parts": [
+    {
+      "id": "U1",
+      "symbol": {
+        "name": "RS485_XCVR_8P",
+        "designator": "U",
+        "pitch": 30,
+        "pins": [
+          "1:RO",
+          "2:RE_N",
+          "3:DE",
+          "4:DI",
+          "5:GND",
+          "6:A",
+          "7:B",
+          "8:VCC"
+        ]
+      },
+      "footprint": {
+        "name": "SOIC_8P",
+        "designator": "U",
+        "pads": [
+          [1, -106.5, -75, 76.8, 22.4],
+          [2, -106.5, -25, 76.8, 22.4],
+          [3, -106.5, 25, 76.8, 22.4],
+          [4, -106.5, 75, 76.8, 22.4],
+          [5, 106.5, 75, 76.8, 22.4],
+          [6, 106.5, 25, 76.8, 22.4],
+          [7, 106.5, -25, 76.8, 22.4],
+          [8, 106.5, -75, 76.8, 22.4]
+        ],
+        "outline": [
+          -160,
+          -101,
+          160,
+          101
+        ]
+      },
+      "name": "RS485_XCVR",
+      "value": "MAX485",
+      "pinoutSource": "MAX485 数据手册标准引脚序（RO/RE/DE/DI/GND/A/B/VCC），通用示例配方未附官方符号证据",
+      "pins": {
+        "1": "RS485_RO",
+        "2": "RS485_DE",
+        "3": "RS485_DE",
+        "4": "RS485_DI",
+        "5": "GND",
+        "6": "RS485_A",
+        "7": "RS485_B",
+        "8": "5V"
+      }
+    },
+    {
+      "id": "C1",
+      "symbol": "CAP",
+      "footprint": "C0402",
+      "value": "100nF",
+      "pins": {
+        "1": "5V",
+        "2": "GND"
+      }
+    },
+    {
+      "id": "R2",
+      "symbol": "RES",
+      "footprint": "R0603",
+      "value": "10k",
+      "pins": {
+        "1": "RS485_DE",
+        "2": "GND"
+      }
+    },
+    {
+      "id": "J2",
+      "symbol": {
+        "name": "HDR_4P_LOGIC",
+        "designator": "J",
+        "pitch": 30,
+        "pins": [
+          "1:RS485_RO",
+          "2:RS485_DE",
+          "3:RS485_DI",
+          "4:GND"
+        ]
+      },
+      "footprint": {
+        "name": "HDR_4P_LOGIC",
+        "designator": "J",
+        "pads": [
+          [
+            1,
+            -150,
+            0,
+            60,
+            60
+          ],
+          [
+            2,
+            -50,
+            0,
+            60,
+            60
+          ],
+          [
+            3,
+            50,
+            0,
+            60,
+            60
+          ],
+          [
+            4,
+            150,
+            0,
+            60,
+            60
+          ]
+        ],
+        "outline": [
+          -200,
+          -60,
+          200,
+          60
+        ]
+      },
+      "name": "LOGIC_PORT",
+      "value": "LOGIC",
+      "pins": {
+        "1": "RS485_RO",
+        "2": "RS485_DE",
+        "3": "RS485_DI",
+        "4": "GND"
+      }
+    },
+    {
+      "id": "R1",
+      "symbol": "RES",
+      "footprint": "R0603",
+      "value": "120R",
+      "pins": {
+        "1": "RS485_A",
+        "2": "RS485_B"
+      }
+    },
+    {
+      "id": "D1",
+      "symbol": "DIODE",
+      "footprint": "SMA",
+      "name": "TVS_A",
+      "value": "SMBJ6.5A",
+      "role": "shunt",
+      "polarity": { "1": "-", "2": "+" },
+      "pins": {
+        "1": "RS485_A",
+        "2": "GND"
+      }
+    },
+    {
+      "id": "D2",
+      "symbol": "DIODE",
+      "footprint": "SMA",
+      "name": "TVS_B",
+      "value": "SMBJ6.5A",
+      "role": "shunt",
+      "polarity": { "1": "-", "2": "+" },
+      "pins": {
+        "1": "RS485_B",
+        "2": "GND"
+      }
+    },
+    {
+      "id": "J1",
+      "symbol": {
+        "name": "HDR_3P_BUS",
+        "designator": "J",
+        "pitch": 30,
+        "pins": [
+          "1:A",
+          "2:B",
+          "3:GND"
+        ]
+      },
+      "footprint": {
+        "name": "HDR_3P_BUS",
+        "designator": "J",
+        "pads": [
+          [
+            1,
+            -100,
+            0,
+            60,
+            60
+          ],
+          [
+            2,
+            0,
+            0,
+            60,
+            60
+          ],
+          [
+            3,
+            100,
+            0,
+            60,
+            60
+          ]
+        ],
+        "outline": [
+          -150,
+          -60,
+          150,
+          60
+        ]
+      },
+      "name": "RS485_BUS",
+      "value": "A/B/GND",
+      "pins": {
+        "1": "RS485_A",
+        "2": "RS485_B",
+        "3": "GND"
+      }
+    }
+  ]
+}

@@ -1,10 +1,18 @@
 {
   "name": "embedded-hardware-kit",
+  "displayName": "Embedded & JLCEDA Hardware Kit",
+  "version": "1.1.0",
+  "description": "嘉立创EDA专业版（EasyEDA Pro v4.1.105+）全流程硬件设计与 STM32/FOC 嵌入式开发套件：集成自研设计审查规范、官方 CLI/eprj3/原理图审查/API 桥接技能、原生 MCP 服务与持久工程记忆。",
   "author": {
     "name": "lyf2010000"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/lyf2010000/666"
-  }
+  },
+  "suggestedPrompts": [
+    "连接本地嘉立创EDA专业版，检查当前工程状态与引脚/网表",
+    "用 easyeda-eprj3 创建或修改 .eprj3 工程并跑本地 ERC/DRC 核对",
+    "按 jlceda-pcb-design 和 FOC 功率板清单审查我的 STM32G474 双路 FOC 原理图与 PCB"
+  ]
 }

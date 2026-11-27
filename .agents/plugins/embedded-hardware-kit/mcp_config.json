@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lceda-pro": {
+      "command": "D:\\lceda-pro\\lceda-pro.exe",
+      "args": ["--mcp", "stdio"]
+    }
+  }
+}

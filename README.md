@@ -7,13 +7,26 @@
 ```text
 antigravity-sync/
 ├── .agents/
+│   ├── plugins/     # Antigravity 插件套件（含 embedded-hardware-kit：6 个嘉立创/STM32 Skills + 常驻记忆 + 原生 MCP）
 │   ├── rules/       # Antigravity 自定义规则（工作区级自动识别）
 │   └── skills/      # Antigravity 自定义技能（每个技能一个子目录，含 SKILL.md）
+├── extensions/      # 嘉立创EDA专业版官方离线扩展包（.eext）
+├── scripts/         # 一键部署与导入脚本（import-jlceda-kit.ps1）
 ├── prompts/         # 常用提问模板与提示词库
 ├── notes/           # 重要对话总结、归档的 Artifacts 与知识笔记
 ├── .gitignore
 └── README.md
 ```
+
+## Windows 一键导入嘉立创EDA Skills / 记忆 / 扩展
+
+在新电脑克隆或 `git pull` 本仓库后，直接运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\import-jlceda-kit.ps1
+```
+
+脚本会自动探测本机嘉立创EDA专业版（`v4.1.70+`），同步全部 6 个 Skills、常驻记忆（`AGENTS.md`）与原生 MCP 到 Antigravity，校验/备齐官方中文版 `.eext` 扩展，并引导导入嘉立创EDA。
 
 ## 首次推送到 GitHub（私有仓库）
 

@@ -1,0 +1,746 @@
+'use strict';
+/**
+ * cli-lib.js — system-library geometry and instance placement through the CLI.
+ *
+ * 2.x rule: a library part is never downloaded as source text and spliced into
+ * the project. The client owns the official symbol/footprint documents:
+ *   - geometry for layout comes from lib_Symbol.getGeometry /
+ *     lib_Footprint.getGeometry (structured, one call per part, made for
+ *     external layout tools);
+ *   - the INSTANCES are placed by the client itself:
+ *       schematic  -> sch_SourcePrimitiveComponent.add
+ *       PCB        -> pcb_Document.importChanges(schUuid, true): the client's
+ *                     own "schematic → PCB" update creates every footprint and
+ *                     links every pad net; the planned positions are then
+ *                     applied with pcb_PrimitiveComponent.modify.
+ *
+ * The import is the same operation as the client's "导入更新" command, so the
+ * resulting PCB netlist is complete by construction — no netlist comparison is
+ * needed afterwards.
+ *
+ * Placement uses two headless sessions: one places the symbols (and saves), a
+ * second reopens the project for the PCB import — the client only exposes
+ * freshly placed primitives to its netlist engine after a reload. The DRC check
+ * runs in its own session.
+ */
+const CLI = require('./cli');
+const fs = require('fs');
+const path = require('path');
+
+const GEOMETRY_HELPER = `
+async function try2(fn) {
+  let last;
+  for (let i = 0; i < 3; i += 1) {
+    try { return await fn(); } catch (e) { last = e; await new Promise((r) => setTimeout(r, 800)); }
+  }
+  throw last;
+}
+`;
+
+// Shared readiness helpers: waitReady, pagesOf (schematic pages), pcbsOf (PCB
+// documents). Every snippet that touches the editor waits for the project to
+// load and polls the document tree until it is populated.
+const READY_HELPER = `
+async function waitReady() {
+  try { await eda.dmt_Project.waitForReady(); } catch (e) { /* older builds */ }
+}
+async function pagesOf() {
+  await waitReady();
+  let p = await eda.dmt_Schematic.getAllSchematicPagesInfo();
+  for (let i = 0; i < 40 && (!Array.isArray(p) || !p.length); i += 1) { await new Promise((r) => setTimeout(r, 750)); p = await eda.dmt_Schematic.getAllSchematicPagesInfo(); }
+  return p;
+}
+async function schsOf() {
+  await waitReady();
+  let s = await eda.dmt_Schematic.getAllSchematicsInfo();
+  for (let i = 0; i < 40 && (!Array.isArray(s) || !s.length); i += 1) { await new Promise((r) => setTimeout(r, 750)); s = await eda.dmt_Schematic.getAllSchematicsInfo(); }
+  return s;
+}
+async function pcbsOf() {
+  await waitReady();
+  let p = await eda.dmt_Pcb.getAllPcbsInfo();
+  for (let i = 0; i < 40 && (!Array.isArray(p) || !p.length); i += 1) { await new Promise((r) => setTimeout(r, 750)); p = await eda.dmt_Pcb.getAllPcbsInfo(); }
+  return p;
+}
+`;
+
+/** Resolve device geometry for a batch of library references.
+ *  requests: [{ key, name?, lcsc? }] -> [{key, name, uuid, libraryUuid,
+ *  designator, symbol:{bbox,pins}, footprint:{bbox,pads}}] */
+function resolveDevices(requests, opts) {
+  const info = CLI.requireCli(opts);
+  const session = CLI.openProject(info.bin, null);
+  try {
+    const code = `
+${GEOMETRY_HELPER}
+const sys = await eda.lib_LibrariesList.getSystemLibraryUuid();
+await eda.lib_LibrariesList.getAllLibrariesList().catch(() => {});
+try { await eda.lib_Device.searchByProperties({ supplierId: 'C7950' }, sys, undefined, undefined, 1, 1); } catch (e) { /* warm-up */ }
+const reqs = __CLI__.args.reqs;
+const out = [];
+for (const r of reqs) {
+  let items = [];
+  if (r.lcsc) items = await try2(() => eda.lib_Device.searchByProperties({ supplierId: r.lcsc }, sys, undefined, undefined, 5, 1));
+  if ((!items || !items.length) && r.name) items = await try2(() => eda.lib_Device.search(r.name, sys, undefined, undefined, 10, 1));
+  const exact = (items || []).find((x) => String(x.name || '').toLowerCase() === String(r.name || '').toLowerCase());
+  const d = exact || (items && items[0]) || null;
+  if (!d) { out.push({ key: r.key, error: 'not found', name: r.name || r.lcsc }); continue; }
+  const symUuid = (d.symbol && d.symbol.uuid) || d.symbolUuid;
+  const fpUuid = (d.footprint && d.footprint.uuid) || d.footprintUuid;
+  const sym = symUuid ? await try2(() => eda.lib_Symbol.getGeometry(symUuid, sys, r.subPartName)) : null;
+  const fp = fpUuid ? await try2(() => eda.lib_Footprint.getGeometry(fpUuid, sys)) : null;
+  out.push({
+    key: r.key,
+    subPartName: r.subPartName,
+    name: d.name,
+    uuid: d.uuid,
+    libraryUuid: sys,
+    designator: (d.otherProperty && d.otherProperty.Designator) || 'U?',
+    supplierId: (d.otherProperty && d.otherProperty['Supplier Part']) || d.supplierId || null,
+    symbolName: d.symbolName || (d.symbol && d.symbol.name) || null,
+    footprintName: d.footprintName || (d.footprint && d.footprint.name) || null,
+    symbol: sym,
+    footprint: fp
+  });
+}
+return out;
+`;
+    return CLI.invoke(info.bin, session, code, { args: { reqs: requests }, timeout: Number((opts && opts.timeout) || 180000) });
+  } finally {
+    CLI.closeSession(info.bin, session);
+  }
+}
+
+/** Split a plan into invocations small enough for a Windows command line
+ *  (`--args` travels as an argument; large boards exceed ~32 KB). */
+function chunkBySize(items, budget) {
+  const out = [];
+  let cur = [];
+  let len = 2;
+  for (const it of items || []) {
+    const s = JSON.stringify(it).length;
+    if (cur.length && len + s > budget) { out.push(cur); cur = []; len = 2; }
+    cur.push(it);
+    len += s + 1;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+// A record whose body is empty carries no data, except NET: the file format
+// keeps one empty NET record as a placeholder.
+const SHELL_TYPES = new Set(['COMPONENT', 'ATTR', 'PAD_NET', 'RULE_SELECTOR']);
+
+/** Drop the empty COMPONENT / ATTR / PAD_NET / RULE_SELECTOR records the
+ *  client leaves behind when it deletes footprints on a schematic → PCB
+ *  import (4.1.94). They are invisible in the editor but the netlist reader
+ *  still counts their pads, so a stale PAD_NET turns into phantom pins.
+ *  Returns the number of records removed. */
+function stripEmptyShells(projectDir) {
+  let removed = 0;
+  const visit = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const ent of entries) {
+      const file = path.join(dir, ent.name);
+      if (ent.isDirectory()) { visit(file); continue; }
+      if (!/\.epcb2$/i.test(ent.name)) continue;
+      const raw = fs.readFileSync(file, 'utf8');
+      const lines = raw.split(/\r?\n/);
+      const kept = [];
+      for (const line of lines) {
+        const sep = line.indexOf('||');
+        if (sep > 0) {
+          let head = null;
+          try { head = JSON.parse(line.slice(0, sep)); } catch (e) { /* not a record head */ }
+          const body = line.slice(sep + 2);
+          if (head && SHELL_TYPES.has(head.type) && /^(\{\})?\|*$/.test(body)) {
+            removed += 1;
+            continue;
+          }
+        }
+        kept.push(line);
+      }
+      if (kept.length !== lines.length) {
+        fs.writeFileSync(file, kept.join('\n'), 'utf8');
+      }
+    }
+  };
+  visit(projectDir);
+  return removed;
+}
+
+/** Rewrite the BOARD_OUTLINE rectangle in the project's main PCB document.
+ *  Used after the client's auto layout when its arrangement needs more room
+ *  than the planned outline (the engine may park a part just outside the
+ *  board, which the DRC's edge rule rejects). Returns the number of files
+ *  changed. */
+function resizeBoardOutline(projectDir, rect) {
+  let changed = 0;
+  const visit = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const ent of entries) {
+      const file = path.join(dir, ent.name);
+      if (ent.isDirectory()) { visit(file); continue; }
+      if (!/\.epcb2$/i.test(ent.name)) continue;
+      const raw = fs.readFileSync(file, 'utf8');
+      const lines = raw.split(/\r?\n/);
+      let hit = false;
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        const sep = line.indexOf('||');
+        if (sep <= 0) continue;
+        let head;
+        try { head = JSON.parse(line.slice(0, sep)); } catch (e) { continue; }
+        if (!head || head.type !== 'POLY') continue;
+        let body;
+        try { body = JSON.parse(line.slice(sep + 2).replace(/\|+$/, '')); } catch (e) { continue; }
+        if (!body || body.polyType !== 'BOARD_OUTLINE') continue;
+        body.path = ['R', rect.x, rect.y + rect.h, rect.w, rect.h, 0, 0];
+        lines[i] = line.slice(0, sep + 2) + JSON.stringify(body) + '|';
+        hit = true;
+      }
+      if (hit) {
+        fs.writeFileSync(file, lines.join('\n'), 'utf8');
+        changed += 1;
+      }
+    }
+  };
+  visit(projectDir);
+  return changed;
+}
+
+/** Place library instances in an EXISTING project (already on disk).
+ *  - symbols: sch_SourcePrimitiveComponent.add, per size-bounded batch;
+ *  - PCB: importChanges(force) once, then planned positions per batch. */
+function placeInstances(projectDir, placement, opts) {
+  const info = CLI.requireCli(opts);
+  const results = {
+    symbols: [],
+    flags: [],
+    wires: [],
+    footprints: [],
+    imported: false,
+    importError: null,
+    schematicParts: 0,
+    removed: 0,
+    missing: [],
+    moved: 0,
+    shellsRemoved: 0,
+    batches: 0,
+    attrs: [],
+    nc: { marked: [], failed: [] }
+  };
+  const timeout = Number((opts && opts.timeout) || 600000);
+  // Designator/name rows go through the source API (updateAttribute): the
+  // positions are derived from the authored schematic but applied by the client, so
+  // they also cover symbols the client placed itself.
+  const applyAttrs = (session) => {
+    for (const chunk of chunkBySize(placement.attrPlan || [], 9000)) {
+      const at = CLI.invoke(info.bin, session, UPDATE_ATTRS, {
+        args: { plan: { schematicName: placement.schematicName, attrs: chunk } },
+        timeout
+      });
+      results.attrs.push(...((at && at.attrs) || []));
+      results.batches += 1;
+    }
+  };
+  // No-connect markers are client-managed state (not expressible in the source
+  // records), so they are applied through sch_PrimitivePin.modify after the
+  // symbols exist.
+  const applyNc = (session) => {
+    if (!(placement.ncPlan || []).length) return;
+    try {
+      const nc = CLI.invoke(info.bin, session, MARK_NC, {
+        args: { plan: { items: placement.ncPlan } },
+        timeout
+      });
+      results.nc.marked.push(...((nc && nc.marked) || []));
+      results.nc.failed.push(...((nc && nc.failed) || []));
+      results.batches += 1;
+    } catch (e) {
+      results.nc.failed.push({ ref: '*', error: String(e && e.message || e) });
+    }
+  };
+
+  // Phase 1 — place the official symbols and draw the wiring through the
+  // source API, then save. The client only exposes these source edits to its
+  // netlist engine after the project is (re)loaded, so the PCB import gets a
+  // fresh session in phase 2.
+  if ((placement.sch || []).length || (placement.flagPlan || []).length
+    || (placement.wirePlan || []).length) {
+    const session = CLI.openProject(info.bin, projectDir);
+    try {
+      for (const chunk of chunkBySize(placement.sch || [], 9000)) {
+        const res = CLI.invoke(info.bin, session, PLACE_SYMBOLS, {
+          args: { plan: { sch: chunk } },
+          timeout
+        });
+        results.symbols.push(...((res && res.symbols) || []));
+        results.batches += 1;
+      }
+      // flags and ports first: they name the nets the wires connect to
+      for (const chunk of chunkBySize(placement.flagPlan || [], 9000)) {
+        const fl = CLI.invoke(info.bin, session, ADD_FLAGS, {
+          args: { plan: { schematicName: placement.schematicName, flags: chunk } },
+          timeout
+        });
+        results.flags.push(...((fl && fl.flags) || []));
+        results.batches += 1;
+      }
+      for (const chunk of chunkBySize(placement.wirePlan || [], 9000)) {
+        const wr = CLI.invoke(info.bin, session, DRAW_WIRES, {
+          args: { plan: { schematicName: placement.schematicName, wires: chunk } },
+          timeout
+        });
+        results.wires.push(...((wr && wr.wires) || []));
+        results.batches += 1;
+      }
+      // no PCB pass will reopen the project: apply the rows here
+      if (!(placement.pcbPlan || []).length) { applyAttrs(session); applyNc(session); }
+    } finally {
+      CLI.closeSession(info.bin, session);
+    }
+  }
+
+  // Phase 2 — let the client build the PCB from the schematic and apply the
+  // planned positions.
+  if ((placement.pcbPlan || []).length) {
+    const session = CLI.openProject(info.bin, projectDir);
+    try {
+      if ((placement.pcbPlan || []).length) {
+        const imp = CLI.invoke(info.bin, session, IMPORT_PCB, {
+        args: {
+          plan: {
+            schematicName: placement.schematicName,
+            designators: placement.pcbPlan.map((p) => p.designator),
+            expectedParts: placement.pcbPlan.length
+          }
+        },
+        timeout
+      });
+      results.imported = !!(imp && imp.imported);
+      results.importError = (imp && imp.importError) || null;
+      results.schematicParts = (imp && imp.schematicParts) || 0;
+      results.removed = (imp && imp.removed) || 0;
+      results.missing = (imp && imp.missing) || [];
+      results.batches += 1;
+
+      for (const chunk of chunkBySize(placement.pcbPlan, 9000)) {
+        const mv = CLI.invoke(info.bin, session, MOVE_FOOTPRINTS, {
+          args: { moves: chunk },
+          timeout
+        });
+        results.moved += (mv && mv.moved) || 0;
+        results.footprints.push(...((mv && mv.footprints) || []));
+        results.batches += 1;
+      }
+      // fresh session: every component (authored + client-placed) is loaded,
+      // so the source API can address each one by designator
+      applyAttrs(session);
+      applyNc(session);
+      }
+    } finally {
+      CLI.closeSession(info.bin, session);
+    }
+    // Safety net for the fallback path above (a pre-existing board whose
+    // footprints had to be deleted): the client leaves empty shells behind.
+    results.shellsRemoved = stripEmptyShells(projectDir);
+  }
+  return results;
+}
+
+const DRAW_WIRES = `
+${READY_HELPER}
+const plan = __CLI__.args.plan;
+const schs = await schsOf();
+const projectId = schs[0].parentProjectUuid;
+const sch = schs.find((x) => x.name === plan.schematicName) || schs[0];
+const out = { wires: [] };
+for (const w of plan.wires || []) {
+  for (const pts of w.chains || []) {
+    const line = [];
+    for (let i = 0; i + 1 < pts.length; i += 2) line.push([pts[i], pts[i + 1]]);
+    if (line.length < 2) continue;
+    try {
+      const opts = { projectId, schematicName: sch.name, pageName: w.pageName, line };
+      if (w.net) opts.net = w.net;
+      const r = await eda.sch_SourcePrimitiveWire.add(opts);
+      const wid = r && r.value && r.value.primitiveId;
+      out.wires.push({ net: w.net, ok: !!(r && r.ok !== false), id: wid });
+      if (!r || r.ok === false) out.wires[out.wires.length - 1].error = r && r.error;
+      // A wire landing on a same-net port would repeat the port's own printed
+      // name. The client's add() always turns the label on, so flip its
+      // visibility attribute back off; the NET value stays, keeping the
+      // netlister link intact.
+      if (w.net && w.hideLabel && wid) {
+        try {
+          const attrs = await eda.sch_PrimitiveAttribute.getAll(wid);
+          for (const a of attrs || []) {
+            const key = typeof a.getState_Key === 'function' ? a.getState_Key() : a.key;
+            const val = typeof a.getState_Value === 'function' ? a.getState_Value() : a.value;
+            if (key !== 'Name' && key !== 'NET' && val !== w.net) continue;
+            const aid = a.primitiveId || a.id;
+            if (aid) await eda.sch_PrimitiveAttribute.modify(aid, { valueVisible: false });
+          }
+        } catch (e) {
+          // label stays visible — the net itself is correct
+        }
+      }
+    } catch (e) {
+      out.wires.push({ net: w.net, ok: false, error: String(e && e.message || e) });
+    }
+  }
+}
+await eda.sch_Document.save().catch(() => {});
+return out;
+`;
+
+const ADD_FLAGS = `
+${READY_HELPER}
+const plan = __CLI__.args.plan;
+const schs = await schsOf();
+const projectId = schs[0].parentProjectUuid;
+const sch = schs.find((x) => x.name === plan.schematicName) || schs[0];
+const out = { flags: [] };
+for (const f of plan.flags || []) {
+  try {
+    const r = await eda.sch_SourcePrimitiveComponent.addNetFlag({
+      projectId,
+      schematicName: sch.name,
+      pageName: f.pageName,
+      type: f.type || 'Power',
+      net: f.net,
+      x: f.x,
+      y: f.y,
+      rotation: f.rotation || 0
+    });
+    out.flags.push({ net: f.net, ok: !!(r && r.ok !== false), id: r && r.value && r.value.primitiveId });
+    if (!r || r.ok === false) out.flags[out.flags.length - 1].error = r && r.error;
+  } catch (e) {
+    out.flags.push({ net: f.net, ok: false, error: String(e && e.message || e) });
+  }
+}
+await eda.sch_Document.save().catch(() => {});
+return out;
+`;
+
+const PLACE_SYMBOLS = `
+${READY_HELPER}
+const plan = __CLI__.args.plan;
+const out = { symbols: [] };
+const pages = await pagesOf();
+const schs = await schsOf();
+const projectId = schs[0].parentProjectUuid;
+const sys = await eda.lib_LibrariesList.getSystemLibraryUuid();
+for (const s of plan.sch || []) {
+  const page = pages.find((p) => p.name === s.pageName) || pages.find((p) => (p.parentSchematicUuid || '') === s.schematicUuid) || pages[0];
+  const sch = schs.find((x) => x.name === s.schematicName) || schs[0];
+  try {
+    const r = await eda.sch_SourcePrimitiveComponent.add({
+      projectId,
+      schematicName: sch.name,
+      pageName: page.name,
+      libraryUuid: s.libraryUuid || sys,
+      name: s.deviceName,
+      subPartName: s.subPartName,
+      x: s.x, y: s.y,
+      designator: s.designator,
+      rotation: s.rotation || 0
+    });
+    out.symbols.push({ ref: s.designator, ok: !!(r && r.ok !== false), id: r && r.primitiveId });
+    if (!r || r.ok === false) out.symbols[out.symbols.length - 1].error = r && r.error;
+  } catch (e) {
+    out.symbols.push({ ref: s.designator, ok: false, error: String(e && e.message || e) });
+  }
+}
+// the import reads the schematic source: persist the symbols first
+await eda.sch_Document.save().catch(() => {});
+return out;
+`;
+
+const IMPORT_PCB = `
+${READY_HELPER}
+const plan = __CLI__.args.plan;
+const out = { imported: false, removed: 0, schematicParts: 0 };
+
+// The import reads what the client has loaded, so make sure every schematic
+// page is open and its netlist sees all components before asking for the
+// update (freshly placed library symbols become visible asynchronously).
+const pages = await pagesOf();
+for (const p of pages) {
+  await eda.dmt_EditorControl.openDocument(p.uuid);
+  await new Promise((r) => setTimeout(r, 400));
+}
+if (pages.length) await eda.dmt_EditorControl.openDocument(pages[pages.length - 1].uuid);
+await new Promise((r) => setTimeout(r, 900));
+for (let i = 0; i < 20; i += 1) {
+  try {
+    const f = await eda.sch_ManufactureData.getNetlistFile('sch', 'JLCEDA');
+    if (f) {
+      const raw = JSON.parse(await f.text());
+      const refs = new Set(Object.values(raw.components || {}).map((c) => c.props && c.props.Designator).filter(Boolean));
+      out.schematicParts = refs.size;
+      if (refs.size >= (plan.expectedParts || 0)) break;
+    }
+  } catch (e) { /* retry */ }
+  await new Promise((r) => setTimeout(r, 700));
+}
+
+const pcbs = await pcbsOf();
+await eda.dmt_EditorControl.openDocument(pcbs[0].uuid);
+await new Promise((r) => setTimeout(r, 1500));
+// Drop the skill's own footprint instances first: the import then takes its
+// clean "create from schematic" path. (Updating the pre-placed instances in
+// place leaves a few multi-part footprints out on 4.1.94.) PCB-only parts that
+// are not in the schematic keep their instances.
+const planned = new Set((plan.designators || []).map(String));
+const comps = await eda.pcb_PrimitiveComponent.getAll();
+const stale = comps
+  .filter((c) => {
+    const ref = c.getState_Designator ? c.getState_Designator() : null;
+    return ref && planned.has(String(ref));
+  })
+  .map((c) => (c.getState_PrimitiveId ? c.getState_PrimitiveId() : null))
+  .filter(Boolean);
+if (stale.length) {
+  await eda.pcb_PrimitiveComponent.delete(stale);
+  out.removed = stale.length;
+}
+await eda.pcb_Document.save();
+await new Promise((r) => setTimeout(r, 800));
+const schs = await schsOf();
+const sch = schs.find((x) => x.name === plan.schematicName) || schs[0];
+try {
+  out.imported = await eda.pcb_Document.importChanges(sch.uuid, true);
+} catch (e) {
+  out.importError = String(e && e.message || e);
+}
+await new Promise((r) => setTimeout(r, 1200));
+// The import commits asynchronously inside the client: poll until every
+// planned designator is visible (or give up after 20 s and report).
+const pollMissing = async (ms) => {
+  const deadline = Date.now() + ms;
+  out.missing = [];
+  for (;;) {
+    const all = await eda.pcb_PrimitiveComponent.getAll();
+    const have = new Set(all.map((c) => (c.getState_Designator ? String(c.getState_Designator()) : '')).filter(Boolean));
+    out.missing = (plan.designators || []).filter((d) => !have.has(String(d)));
+    if (!out.missing.length || Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 600));
+  }
+};
+await pollMissing(20000);
+// importChanges takes the SCHEMATIC uuid (the page uuid is not the API
+// contract). A true return with zero footprints created is a client API
+// bug, not a wrong-uuid symptom: surface it as such instead of retrying with
+// a page uuid, which would hide the defect.
+out.created = (plan.designators || []).length - out.missing.length;
+if (out.imported && (plan.designators || []).length && out.created === 0) {
+  // Measured: a schematic with no footprint-bearing component (only power
+  // flags / symbol-only parts) imports "successfully" with nothing to place.
+  // Nothing else about the schematic UUID or the API is wrong.
+  out.importEmpty = 'importChanges returned true but created 0 footprints — no footprint-bearing component in the schematic netlist (or the import was skipped)';
+}
+await eda.pcb_Document.save();
+return out;
+`;
+
+const MOVE_FOOTPRINTS = `
+${READY_HELPER}
+const pcbs = await pcbsOf();
+await eda.dmt_EditorControl.openDocument(pcbs[0].uuid);
+await new Promise((r) => setTimeout(r, 800));
+const comps = await eda.pcb_PrimitiveComponent.getAll();
+const byRef = new Map();
+for (const c of comps) {
+  const ref = c.getState_Designator ? c.getState_Designator() : null;
+  if (ref) byRef.set(String(ref), c);
+}
+const out = { moved: 0, footprints: [] };
+for (const p of __CLI__.args.moves || []) {
+  const c = byRef.get(String(p.designator));
+  const id = c && c.getState_PrimitiveId ? c.getState_PrimitiveId() : null;
+  if (!id) {
+    out.footprints.push({ ref: p.designator, ok: false, error: 'not in the PCB after import' });
+    continue;
+  }
+  try {
+    await eda.pcb_PrimitiveComponent.modify(id, { x: p.x, y: p.y, rotation: p.rotation || 0 });
+    out.moved += 1;
+    out.footprints.push({ ref: p.designator, ok: true, id });
+  } catch (e) {
+    out.footprints.push({ ref: p.designator, ok: false, error: String(e && e.message || e) });
+  }
+}
+await eda.pcb_Document.save();
+return out;
+`;
+
+/** Set the client's no-connect marker on the design's NC pins.
+ *  Document-scoped API: the page must be opened (rendered) first, then
+ *  sch_PrimitiveComponent.getAllPinsByPrimitiveId + sch_PrimitivePin.modify
+ *  with noConnected:true. The state is client-managed — it is not written into
+ *  the sheet source records, so offline builds keep the NC stub+label. */
+const MARK_NC = `
+${READY_HELPER}
+const plan = __CLI__.args.plan;
+const pages = await pagesOf();
+const out = { marked: [], failed: [] };
+if (!plan.items || !plan.items.length) return out;
+if (!eda.sch_PrimitivePin || typeof eda.sch_PrimitivePin.modify !== 'function') {
+  out.failed.push({ ref: '*', error: 'sch_PrimitivePin.modify is unavailable in this client build' });
+  return out;
+}
+const byPage = new Map();
+for (const it of plan.items) {
+  const k = it.pageName || (pages[0] && pages[0].name) || 'P1';
+  if (!byPage.has(k)) byPage.set(k, []);
+  byPage.get(k).push(it);
+}
+for (const [pageName, items] of byPage) {
+  const page = pages.find((p) => p.name === pageName) || pages[0];
+  if (!page) {
+    for (const it of items) out.failed.push({ ref: it.designator, error: 'page not found' });
+    continue;
+  }
+  await eda.dmt_EditorControl.openDocument(page.uuid);
+  await new Promise((r) => setTimeout(r, 1200));
+  let comps = [];
+  for (let i = 0; i < 20 && !comps.length; i += 1) {
+    try { comps = await eda.sch_PrimitiveComponent.getAll(); } catch (e) { comps = []; }
+    if (!comps.length) await new Promise((r) => setTimeout(r, 500));
+  }
+  for (const it of items) {
+    let comp = null;
+    for (const c of comps) {
+      const d = c.getState_Designator ? String(c.getState_Designator()) : '';
+      if (!d) continue;
+      if (d === it.designator || d.indexOf(it.designator + '.') === 0
+        || new RegExp('^' + it.designator + '[A-Z]$').test(d)) { comp = c; break; }
+    }
+    const id = comp && (comp.getState_PrimitiveId ? comp.getState_PrimitiveId() : comp.primitiveId);
+    if (!id) {
+      out.failed.push({ ref: it.designator, error: 'component not found on ' + page.name });
+      continue;
+    }
+    let pins = [];
+    try { pins = await eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(id); } catch (e) { pins = []; }
+    for (const num of it.pins || []) {
+      const pin = (pins || []).find((p) => String(p.pinNumber) === String(num));
+      if (!pin || !pin.primitiveId) {
+        out.failed.push({ ref: it.designator, pin: String(num), error: 'pin not found' });
+        continue;
+      }
+      try {
+        await eda.sch_PrimitivePin.modify(pin.primitiveId, { noConnected: true });
+        out.marked.push({ ref: it.designator, pin: String(num) });
+      } catch (e) {
+        out.failed.push({ ref: it.designator, pin: String(num), error: String(e && e.message || e) });
+      }
+    }
+  }
+}
+await eda.sch_Document.save().catch(() => {});
+return out;
+`;
+
+/** Place the designator/name rows through the source API.
+ *  `updateAttribute` addresses an attribute by (component id, key); the
+ *  component is looked up by designator on the named page. Coordinates are the
+ *  sheet coordinates the offline engine computed — identical to the values in
+ *  the authored ATTR records, so a client build and an offline build agree. */
+const UPDATE_ATTRS = `
+${READY_HELPER}
+const plan = __CLI__.args.plan;
+const schs = await schsOf();
+const projectId = schs[0].parentProjectUuid;
+const sch = schs.find((x) => x.name === plan.schematicName) || schs[0];
+const out = { attrs: [] };
+for (const a of plan.attrs || []) {
+  const rec = { ref: a.designator, key: a.key, ok: false };
+  try {
+    const g = await eda.sch_SourcePrimitiveComponent.get({
+      projectId, schematicName: sch.name, pageName: a.pageName, designator: a.designator
+    });
+    const detail = g && g.ok !== false ? (g.value || g) : null;
+    const id = detail && (detail.primitiveId || detail.id);
+    if (!id) {
+      rec.error = (g && g.error && g.error.message) || 'component not found';
+      out.attrs.push(rec);
+      continue;
+    }
+    const r = await eda.sch_SourcePrimitiveComponent.updateAttribute({
+      projectId, schematicName: sch.name, pageName: a.pageName,
+      primitiveId: id, key: a.key, x: a.x, y: a.y, rotation: 0, valueVisible: true
+    });
+    rec.ok = !!(r && r.ok !== false);
+    if (!rec.ok) rec.error = (r && r.error && r.error.message) || 'updateAttribute failed';
+  } catch (e) {
+    rec.error = String(e && e.message || e);
+  }
+  out.attrs.push(rec);
+}
+await eda.sch_Document.save().catch(() => {});
+return out;
+`;
+
+/** Run the client's schematic DRC on an existing project.
+ *  Returns {passed, counts, violations} — violations keep rule / net / the
+ *  primitives (designator, pin name, sheet) needed for a fix. */
+function schDrc(projectDir, opts) {
+  const info = CLI.requireCli(opts);
+  const session = CLI.openProject(info.bin, projectDir);
+  try {
+    return CLI.invoke(info.bin, session, SCH_DRC, {
+      timeout: Number((opts && opts.timeout) || 180000)
+    });
+  } finally {
+    CLI.closeSession(info.bin, session);
+  }
+}
+
+const SCH_DRC = `
+${READY_HELPER}
+const pages = await pagesOf();
+for (const p of pages) {
+  await eda.dmt_EditorControl.openDocument(p.uuid);
+  await new Promise((r) => setTimeout(r, 300));
+}
+if (pages.length) await eda.dmt_EditorControl.openDocument(pages[pages.length - 1].uuid);
+await new Promise((r) => setTimeout(r, 900));
+let raw;
+try {
+  raw = await eda.sch_Drc.check(true, false, true);
+} catch (e) {
+  return { error: String(e && e.message || e) };
+}
+const arr = Array.isArray(raw) ? raw : [];
+const counts = { fatalError: 0, error: 0, warn: 0 };
+const violations = [];
+for (const v of arr) {
+  if (typeof v === 'string') {
+    counts.error += 1;
+    violations.push({ type: 'error', rule: null, net: null, message: v, primitives: [] });
+    continue;
+  }
+  const type = v.type || 'error';
+  counts[type] = (counts[type] || 0) + 1;
+  violations.push({
+    type,
+    rule: v.rule || null,
+    net: v.net || null,
+    primitives: (v.primitives || []).map((p) => ({
+      name: p.name || null,
+      designator: p.designator || null,
+      sheet: p.sheet || null,
+      id: p.primitiveId || null
+    }))
+  });
+}
+return { passed: counts.fatalError === 0 && counts.error === 0, counts, violations };
+`;
+
+module.exports = { resolveDevices, placeInstances, schDrc, stripEmptyShells, resizeBoardOutline };
+

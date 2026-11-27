@@ -1,0 +1,12 @@
+# Temporary scripts and review artifacts
+tmp/
+
+# Dependencies (the skill itself has none)
+node_modules/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

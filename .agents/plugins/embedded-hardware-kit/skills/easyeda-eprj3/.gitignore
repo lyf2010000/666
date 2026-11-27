@@ -1,0 +1,17 @@
+# Build artefacts from scripts/eval.js (the history ledger IS committed)
+eval/.build/
+eval/.intake/
+
+# Ephemeral scratch left by an interrupted build (atomic writes clean up on success)
+*.tmp
+*.dryrun*
+
+# Local agent/tool state
+.dsh/
+node_modules/
+
+# Selection cache (intake resolve accelerator; deleting it changes speed, never output)
+.cache/
+/tmp/
+# release assets
+/dist/

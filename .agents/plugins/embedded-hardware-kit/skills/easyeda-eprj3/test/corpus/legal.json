@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Legal corpus — projects every gate must ACCEPT.",
+    "build:<design> means 'produce it with scripts/build.js first'; dir:<path> means 'a project",
+    "already committed in this repo'. key is the baseline id the illegal variants clone from.",
+    "A build entry must exit 0 and show 0 validate errors and 0 ERC errors.",
+    "formatOnly: true is for projects this skill did not author: the FORMAT gate must accept",
+    "them, their circuit is out of scope (their ERC findings are printed, not asserted).",
+    "Since 2.2.8 every build entry is an authored-geometry design; the committed client",
+    "samples were removed from the repo (see docs/corpus.md) so there are no dir: entries.",
+    "Maintainers: run `node test/corpus.js --probe` to see what each gate reports."
+  ],
+  "legal": [
+    {
+      "name": "build/blink",
+      "key": "blink",
+      "build": "test/fixtures/blink.json",
+      "note": "the reference design: 3 parts, named wires, power flags, 2-layer routed with vias"
+    },
+    {
+      "name": "build/ai-resistor-link",
+      "key": "ai",
+      "build": "test/fixtures/ai-resistor-link.json",
+      "note": "inline preset symbols, tracks on layers 1 and 2, two vias"
+    }
+  ]
+}

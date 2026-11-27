@@ -1,0 +1,301 @@
+'use strict';
+/**
+ * intent.js — the fifth gate: does the DESIGN match its stated intent?
+ *
+ * The other gates prove the files agree with design.json (E003) and the copper
+ * obeys the rules (DRC). Neither can catch an intent mistake IN design.json
+ * itself: an LED whose anode lands on ground, a divider wired backwards, a
+ * supply rail with no decoupling. This gate checks the design against what it
+ * DECLARES about itself:
+ *
+ *   "parts[].polarity": { "1": "+", "2": "-" }   — pin polarity marks
+ *   "expect": {
+ *     "decoupling": true,                         — every supply net gets a cap to ground
+ *     "pairs": [["USB_DP", "USB_DM"]],            — differential pairs must exist with equal pin counts
+ *     "valueRange": [{ "ref": "R1", "min": "100R", "max": "1k" }],
+ *     "divider": [{ "input": "VIN", "output": "FB", "top": "R1", "bottom": "R2", "ratio": 0.55, "tol": 0.05 }]
+ *   }
+ *
+ * Everything here is computable from the design alone — E003 already proves
+ * the built netlist matches it.
+ */
+
+const G = require('./geom');
+
+const I_RULES = {
+  I001: { level: 'error', weight: 15, text: 'polarized part wired backwards' },
+  I002: { level: 'error', weight: 10, text: 'supply net without a decoupling capacitor' },
+  I003: { level: 'error', weight: 8, text: 'declared pair missing or unbalanced' },
+  I004: { level: 'error', weight: 8, text: 'part value outside its declared range' },
+  I005: { level: 'error', weight: 10, text: 'divider wiring or ratio wrong' },
+  I006: { level: 'warn', weight: 2, text: 'declared pair is not routed as a pair' },
+  I007: { level: 'error', weight: 12, text: 'real-chip pin definitions hand-authored without a source' },
+  I008: { level: 'error', weight: 10, text: 'device role binding incomplete, duplicated or conflicting' }
+};
+
+/** "10k" → 10000, "330R" → 330, "100nF" → 1e-7, "4.7uF" → 4.7e-6, "1MΩ" → 1e6,
+ *  plus the digit-between shorthand the build docs use: "4k7" → 4700,
+ *  "1k5" → 1500, "2R2" → 2.2, "4n7" → 4.7e-9. */
+function parseValue(v) {
+  // shorthand first: digit + prefix letter + digit ("4k7"), so it cannot be
+  // swallowed by the plain number form below
+  const short = /^(\d+)([pnuUμµkKMRrgGmM])(\d+)$/.exec(String(v).trim());
+  if (short) {
+    const num = Number(`${short[1]}.${short[3]}`);
+    const scale = { p: 1e-12, n: 1e-9, u: 1e-6, U: 1e-6, 'μ': 1e-6, 'µ': 1e-6, m: 1e-3,
+      R: 1, r: 1, k: 1e3, K: 1e3, M: 1e6, G: 1e9, g: 1e9 };
+    return num * (scale[short[2]] !== undefined ? scale[short[2]] : 1);
+  }
+  const m = /^(\d+(?:\.\d+)?)\s*(p|n|u|U|μ|µ|k|K|M|m|R|r|G|g)?\s*(F|f|H|h|Ω|ohm|OHM)?$/.exec(String(v).trim());
+  if (!m) return null;
+  const num = Number(m[1]);
+  const pfx = m[2] || '';
+  const unit = (m[3] || '').toLowerCase();
+  if (unit === 'f' || unit === 'h') {
+    // capacitance / inductance: m is milli here
+    const scale = { p: 1e-12, n: 1e-9, u: 1e-6, U: 1e-6, 'μ': 1e-6, 'µ': 1e-6, m: 1e-3, '': 1 };
+    return num * (scale[pfx] !== undefined ? scale[pfx] : 1);
+  }
+  // resistance or plain number: R=1, k=1e3, M=1e6, G=1e9
+  const scale = { '': 1, R: 1, r: 1, k: 1e3, K: 1e3, M: 1e6, G: 1e9, g: 1e9 };
+  return num * (scale[pfx] !== undefined ? scale[pfx] : 1);
+}
+
+/**
+ * @param d   normalized design (design.js normalize output)
+ * @returns {errors, warnings, checks:[{id,text}]} — checks are the rules that ran
+ */
+function runIntent(d, opts) {
+  const placedOnly = !!(opts && opts.placedOnly);
+  const errors = [];
+  const warnings = [];
+  const checks = [];
+  const add = (code, msg, extra) => errors.push(Object.assign({
+    id: code, level: I_RULES[code].level, msg, rule: I_RULES[code].text
+  }, extra || {}));
+  const addW = (code, msg, extra) => warnings.push(Object.assign({
+    id: code, level: 'warn', msg, rule: I_RULES[code].text
+  }, extra || {}));
+
+  const expect = d.expect || {};
+  const byId = new Map(d.parts.map((p) => [p.id, p]));
+  const downNets = new Set([...d.powerNets.entries()].filter(([, v]) => v === 'down').map(([n]) => n));
+  const upNets = new Set([...d.powerNets.entries()].filter(([, v]) => v === 'up').map(([n]) => n));
+
+  // ---- polarity: what a polarity mark can prove about a 2-pin part.
+  //   "+" (anode) on a ground net → reversed, UNLESS the part declares role
+  //     "shunt" (a TVS/clamp legitimately puts its anode on ground). With the
+  //     anode at ground the part never conducts from any positive net — this
+  //     is the reversed-LED / reversed-electrolytic killer.
+  //   A cathode on ground is NOT an error: that is the standard low-side LED,
+  //   the electrolytic's "-" and a signal clamp. "- on a supply" is fine too
+  //   (flyback diode clamping a rail, series diode into the downstream rail).
+  //   Rails-to-rails orientation is undecidable from nets alone → not judged.
+  let polChecked = 0;
+  for (const p of d.parts) {
+    if (!p.polarity) continue;
+    polChecked += 1;
+    const shunt = p.role === 'shunt';
+    for (const [pin, mark] of Object.entries(p.polarity)) {
+      const net = p.pins[pin];
+      if (!net) continue;
+      if (mark === '+' && downNets.has(net) && !shunt) {
+        add('I001', `part ${p.id}: pin ${pin} is marked "+" but sits on ground net "${net}" — reverse it (if this is a TVS/clamp, declare "role": "shunt" instead)`, {
+          ref: p.id, pin, fix: `swap the two pins in parts[].pins of ${p.id}, or add "role": "shunt" if the anode belongs on ground, then re-run build.js --force`
+        });
+      }
+    }
+  }
+  if (polChecked) checks.push({ id: 'polarity', parts: polChecked });
+
+  // ---- I007: pin definitions of real devices must not be hand-invented.
+  // A multi-pin inline symbol whose value looks like a manufacturer part
+  // number (or whose pin names carry GPIO-style port names) needs a declared
+  // source: an "ic" entry (official-library evidence) or a "pinoutSource"
+  // note (datasheet/官方库出处) added AFTER checking the datasheet. Generic
+  // stand-ins stay legal by declaring what they are.
+  const GPIOish = /(GPIO|P[ABCDEF][0-9]+)/i;
+  const mpnLike = (v) => /^[A-Z]{1,5}[-]?[0-9][0-9A-Z\-]*$/i.test(String(v || '').trim());
+  let pinoutsChecked = 0;
+  for (const p of d.parts) {
+    if (!p.symbol || typeof p.symbol !== 'object' || !Array.isArray(p.symbol.pins)) continue;
+    if (p.ic || p.pinoutSource) continue;
+    if (p.symbol.pins.length < 8) continue;
+    const names = p.symbol.pins.map((s) => (typeof s === 'string' ? (s.split(':')[1] || '') : (s.name || '')));
+    const gpioNames = names.some((n) => GPIOish.test(n));
+    if (!gpioNames && !mpnLike(p.value)) continue;
+    pinoutsChecked += 1;
+    add('I007', `part ${p.id}: ${p.symbol.pins.length}-pin inline symbol${p.value ? ` ("${p.value}")` : ''} looks like a real device — its pin definitions must not be invented`, {
+      ref: p.id,
+      fix: `use an "ic" entry (official-library evidence), or verify the pinout against the datasheet and declare "pinoutSource": "<datasheet URL / 出处>" on the part; for a generic stand-in set "pinoutSource": "通用示例符号（非特定型号）"`
+    });
+  }
+  if (pinoutsChecked) checks.push({ id: 'pinoutSource', parts: pinoutsChecked });
+
+  // ---- I008: role binding integrity (typed recipes / explicit role maps).
+  // A part that declares `roles: { ROLE: net }` binds a device role to a net;
+  // this gate proves the binding is complete and unambiguous:
+  //   - every required role of the device is bound;
+  //   - every declared role exists on the device (design.js also rejects it);
+  //   - no pin ends up in two roles bound to DIFFERENT nets (a real conflict —
+  //     distinct roles sharing a net is a legitimate tie, e.g. GND + VSS).
+  let rolesChecked = 0;
+  for (const p of d.parts) {
+    if (!p.roles || !p.pinRoles) continue;
+    rolesChecked += 1;
+    const missing = (p.requiredRoles || []).filter((r) => p.roles[r] === undefined);
+    if (missing.length) {
+      add('I008', `part ${p.id} (${p.deviceClass || 'device'}): required role(s) ${missing.join(', ')} are not bound`, {
+        ref: p.id,
+        fix: `bind them in parts[].roles — e.g. "roles": { ${missing.map((r) => `"${r}": "<net>"`).join(', ')} }`
+      });
+    }
+    const pinNet = new Map();
+    for (const [role, net] of Object.entries(p.roles)) {
+      const pins = p.pinRoles[role];
+      if (pins === undefined) continue;                 // reported by design.js
+      for (const num of [].concat(pins)) {
+        const prev = pinNet.get(String(num));
+        if (prev && prev.net !== net) {
+          add('I008', `part ${p.id}: pin ${num} is bound to both "${prev.role}" (${prev.net}) and "${role}" (${net})`, {
+            ref: p.id, pin: String(num),
+            fix: `give pin ${num} one role only, or bind both roles to the same net`
+          });
+        } else if (!prev) {
+          pinNet.set(String(num), { role, net });
+        }
+      }
+    }
+  }
+  if (rolesChecked) checks.push({ id: 'roles', parts: rolesChecked });
+
+  // ---- decoupling: every supply net needs a capacitor to a ground net.
+  if (expect.decoupling) {
+    checks.push({ id: 'decoupling' });
+    for (const net of upNets) {
+      const hasCap = d.parts.some((p) => /^C/i.test(p.id)
+        && Object.values(p.pins).includes(net)
+        && [...downNets].some((g) => Object.values(p.pins).includes(g)));
+      if (!hasCap) {
+        add('I002', `supply net "${net}" has no decoupling capacitor to ground`, {
+          net,
+          fix: `add a 100nF capacitor from "${net}" to ground — or run: node scripts/autofix.js --design <file>`
+        });
+      }
+    }
+  }
+
+  // ---- pairs: both nets must exist with the same pin count.
+  for (const pair of expect.pairs || []) {
+    checks.push({ id: 'pair', nets: pair });
+    if (!Array.isArray(pair) || pair.length !== 2) continue;
+    const [a, b] = pair;
+    const pinsOf = (net) => d.parts.flatMap((p) => Object.entries(p.pins)
+      .filter(([, n]) => n === net).map(([num]) => `${p.id}.${num}`));
+    const pa = pinsOf(a);
+    const pb = pinsOf(b);
+    if (!pa.length || !pb.length) {
+      add('I003', `declared pair [${a}, ${b}]: ${!pa.length ? `"${a}" is unused` : `"${b}" is unused`}`, {
+        fix: `check the net names in parts[].pins — a pair member with no pins is a typo`
+      });
+    } else if (pa.length !== pb.length) {
+      add('I003', `declared pair [${a}, ${b}] is unbalanced: ${pa.length} pin(s) vs ${pb.length} pin(s)`, {
+        fix: `a differential pair needs the same pin count on both sides — check parts[].pins`
+      });
+    } else if (!placedOnly) {
+      // routed board: the pair exists, but the local DRC has no gap/skew rule —
+      // say so instead of telling the author to "do it in the client"
+      addW('I006', `pair [${a}, ${b}] is declared; the local checks do not verify pair gap, skew or length`, {
+        fix: `keep the two nets side by side in pcb.tracks with the intended gap and matched length, then verify the pair in the EasyEDA client`
+      });
+    }
+  }
+
+  // ---- valueRange: parse the declared min/max and the part's own value.
+  for (const r of expect.valueRange || []) {
+    checks.push({ id: 'valueRange', ref: r.ref });
+    const p = byId.get(r.ref);
+    if (!p) {
+      add('I004', `valueRange references unknown part "${r.ref}"`);
+      continue;
+    }
+    const v = p.value === null ? null : parseValue(p.value);
+    const lo = r.min !== undefined ? parseValue(r.min) : null;
+    const hi = r.max !== undefined ? parseValue(r.max) : null;
+    if (v === null) {
+      addW('I004', `part ${p.id}: value "${p.value}" is not parseable as a number (expected like 330R / 10k / 100nF)`, {
+        ref: p.id, fix: `write the value in engineering notation, e.g. "4k7" or "10k"`
+      });
+      continue;
+    }
+    if ((lo !== null && v < lo) || (hi !== null && v > hi)) {
+      add('I004', `part ${p.id}: value ${p.value} is outside the declared range [${r.min} .. ${r.max}]`, {
+        ref: p.id,
+        fix: `pick a value inside [${r.min} .. ${r.max}] for ${p.id} in the design`
+      });
+    }
+  }
+
+  // ---- divider: wiring first, then the ratio from the actual values.
+  for (const dv of expect.divider || []) {
+    checks.push({ id: 'divider', output: dv.output });
+    const top = byId.get(dv.top);
+    const bottom = byId.get(dv.bottom);
+    const pinsOn = (p, net) => p && Object.values(p.pins).includes(net);
+    if (!top || !bottom) {
+      add('I005', `divider references unknown part "${!top ? dv.top : dv.bottom}"`);
+      continue;
+    }
+    if (!pinsOn(top, dv.input) || !pinsOn(top, dv.output)) {
+      add('I005', `divider top ${dv.top} must sit between "${dv.input}" and "${dv.output}"`, {
+        fix: `wire ${dv.top} pin 1 to "${dv.input}" and pin 2 to "${dv.output}" in parts[].pins`
+      });
+    }
+    if (!pinsOn(bottom, dv.output) || !(pinsOn(bottom, [...downNets][0]) || [...downNets].some((g) => pinsOn(bottom, g)))) {
+      add('I005', `divider bottom ${dv.bottom} must sit between "${dv.output}" and ground`, {
+        fix: `wire ${dv.bottom} pin 1 to "${dv.output}" and pin 2 to a ground net in parts[].pins`
+      });
+    }
+    const rt = parseValue(top.value);
+    const rb = parseValue(bottom.value);
+    if (rt === null || rb === null) {
+      // an unparseable resistor value used to skip the ratio check silently
+      addW('I005', `divider ${dv.top}/${dv.bottom}: value "${rt === null ? top.value : bottom.value}" is not parseable — the ratio check was skipped`, {
+        fix: `write the values in engineering notation ("4k7", "10k", "330R") so the ratio check can run`
+      });
+    }
+    if (rt !== null && rb !== null && rt > 0) {
+      const ratio = rb / (rt + rb);
+      const tol = dv.tol === undefined ? 0.05 : dv.tol;
+      if (Math.abs(ratio - dv.ratio) > tol) {
+        add('I005', `divider ratio ${ratio.toFixed(3)} is outside ${dv.ratio}±${tol} (${dv.top}=${top.value}, ${dv.bottom}=${bottom.value})`, {
+          fix: `recompute the resistor pair: ratio = bottom/(top+bottom) — aim for ${dv.ratio}`
+        });
+      }
+      // A correct ratio does NOT prove the output voltage: the check needs the
+      // reference the divider feeds. "vref": 1.24 with a 0.8 V-ref controller
+      // and a "5V" rail used to pass at the same ratio while making 3.2 V.
+      if (dv.vref !== undefined) {
+        const vout = dv.vref * (rt + rb) / rb;
+        const named = Number((/^(\d+(?:\.\d+)?)\s*V/i.exec(String(dv.input || '')) || [])[1]);
+        const expected = dv.vout !== undefined ? dv.vout : named;
+        checks.push({ id: 'dividerVref', vout: Number(vout.toFixed(3)), expected: expected ?? null });
+        if (Number.isFinite(expected) && Math.abs(vout - expected) > (dv.vtol === undefined ? 0.05 : dv.vtol) * expected) {
+          add('I005', `divider makes ${vout.toFixed(2)} V (vref ${dv.vref} V × 1/ratio) but rail "${dv.input}" is ~${expected} V`, {
+            fix: `recompute the pair for the controller's REAL reference: ratio = vref/vout — bottom = top·vref/(vout−vref)`
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    errors,
+    warnings,
+    checks,
+    stats: { rules: Object.keys(I_RULES).length, ran: checks.length }
+  };
+}
+
+module.exports = { runIntent, parseValue, I_RULES };
+void G;

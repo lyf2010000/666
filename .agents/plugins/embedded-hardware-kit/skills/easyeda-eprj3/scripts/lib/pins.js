@@ -1,0 +1,83 @@
+'use strict';
+/**
+ * pins.js — resolve "R1.2" to an absolute connection point.
+ *
+ * This is the antidote to hand-computing pin coordinates. A sheet is read once,
+ * every placed component is measured, and pin references become exact mil
+ * coordinates that wires can attach to without guessing.
+ */
+
+const fs = require('fs');
+const E = require('./eprj3');
+const G = require('./geom');
+const P = require('./parts');
+const { docsOf } = require('./checks');
+
+/** [{ref, x, y, rotation, symbolUuid, pins:[{num,name,x,y,dir}]}] for one sheet */
+function sheetPins(file) {
+  if (!fs.existsSync(file)) throw new Error(`sheet document missing: ${file}`);
+  const docs = docsOf(file);
+  // empty/truncated file → no main doc: report no pins instead of crashing
+  const main = docs[docs.length - 1] || { docType: null, uuid: null, lines: [] };
+  const symbolByUuid = new Map();
+  for (const d of docs) {
+    if (d.docType !== 'SYMBOL') continue;
+    symbolByUuid.set(d.uuid, P.parseSymbolEntry({
+      symbolDoc: d.lines.slice(1).map(E.parseRecord).filter(Boolean).map((r) => E.formatRecord(r.head, r.body))
+    }));
+  }
+  const recs = main.lines.slice(1).map(E.parseRecord).filter(Boolean);
+  const attrs = recs.filter((r) => r.type === 'ATTR' && r.body);
+  const out = [];
+  for (const r of recs) {
+    if (r.type !== 'COMPONENT') continue;
+    const b = r.body;
+    const mine = attrs.filter((a) => a.body.parentId === r.id);
+    const des = mine.find((a) => a.body.key === 'Designator');
+    const symAttr = mine.find((a) => a.body.key === 'Symbol');
+    const gn = mine.find((a) => a.body.key === 'Global Net Name');
+    const sym = symAttr ? symbolByUuid.get(symAttr.body.value) : null;
+    const ref = (des && des.body.value) || (gn ? `#${gn.body.value}` : '?');
+    const entry = { ref, x: b.x, y: b.y, rotation: b.rotation || 0, power: gn ? gn.body.value : null, pins: [] };
+    if (sym) {
+      for (const pin of sym.pins) {
+        const t = G.pinTip(pin, b.x, b.y, b.rotation || 0);
+        entry.pins.push({
+          num: String(pin.num),
+          name: pin.name,
+          x: t.x,
+          y: t.y,
+          dir: {
+            x: Math.abs(t.x - b.x) >= Math.abs(t.y - b.y) ? (Math.sign(t.x - b.x) || 1) : 0,
+            y: Math.abs(t.x - b.x) >= Math.abs(t.y - b.y) ? 0 : (Math.sign(t.y - b.y) || -1)
+          }
+        });
+      }
+    } else if (gn) {
+      // power flags / ports connect at their origin
+      entry.pins.push({ num: '1', name: gn.body.value, x: b.x, y: b.y, dir: { x: 0, y: 1 } });
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+/** "R1.2" → {x, y} ; throws with the list of valid refs/pins on failure. */
+function resolvePin(components, ref) {
+  const m = /^([^.#]+)\.(.+)$/.exec(String(ref).trim());
+  if (!m) throw new Error(`bad pin reference "${ref}" (want PART.PIN, e.g. R1.2)`);
+  const [, part, pin] = m;
+  const comp = components.find((c) => c.ref === part || c.ref === `#${part}`);
+  if (!comp) {
+    const known = components.filter((c) => c.ref && c.ref !== '?').map((c) => c.ref).join(', ');
+    throw new Error(`component "${part}" not found on this sheet (have: ${known})`);
+  }
+  const p = comp.pins.find((x) => x.num === String(pin) || x.name === String(pin));
+  if (!p) {
+    const known = comp.pins.map((x) => `${x.num}/${x.name}`).join(', ');
+    throw new Error(`pin "${pin}" not on ${comp.ref} (have: ${known})`);
+  }
+  return { x: p.x, y: p.y, dir: p.dir, comp: comp.ref, pin: p.num, name: p.name };
+}
+
+module.exports = { sheetPins, resolvePin };

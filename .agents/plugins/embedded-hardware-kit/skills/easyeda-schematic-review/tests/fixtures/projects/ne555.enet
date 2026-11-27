@@ -1,0 +1,424 @@
+{
+    "version": "2.0.0",
+    "projectId": "9343d52a183f423d8504677d2c061b22",
+    "components": {
+        "gge1": {
+            "props": {
+                "Unique ID": "gge1",
+                "Add into BOM": "yes",
+                "Convert to PCB": "yes",
+                "Device": "99ba8c3220ab0d25",
+                "Footprint": "e78a1d8c5e4e651e",
+                "PCB Layer": "Default",
+                "Symbol": "3c3d9769b67a6f46",
+                "Designator": "U1",
+                "LCSC Part Name": "NE555",
+                "Supplier Part": "C504549",
+                "Manufacturer": "",
+                "Manufacturer Part": "NE555",
+                "Supplier Footprint": "SOP-8-4.0mm",
+                "JLCPCB Part Class": "Extended Part",
+                "Datasheet": "",
+                "Supplier": "LCSC",
+                "3D Model": "a3315c1c78f949e6bb82c6eaca1c53c7|0819f05c4eef4c71ace90d822a990e87",
+                "3D Model Title": "SOP-8_L5.0-W4.0-H1.8-LS6.2-P1.27",
+                "3D Model Transform": "244.094,196.85,0,90,0,0,0,0,0",
+                "Name": "={Manufacturer Part}",
+                "Description": "",
+                "Reuse Block": "",
+                "Group ID": "",
+                "Channel ID": "$1I2",
+                "DeviceName": "NE555",
+                "FootprintName": "SOP-8_L5.0-W4.0-P1.27-LS6.0-BL"
+            },
+            "altLibs": {
+                "devices": [],
+                "footprints": []
+            },
+            "pinInfoMap": {
+                "1": {
+                    "name": "GND",
+                    "number": "1",
+                    "net": "GND",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "1"
+                    }
+                },
+                "2": {
+                    "name": "TRIG",
+                    "number": "2",
+                    "net": "$1N13",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "2"
+                    }
+                },
+                "3": {
+                    "name": "OUT",
+                    "number": "3",
+                    "net": "OUT",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "3"
+                    }
+                },
+                "4": {
+                    "name": "RESET",
+                    "number": "4",
+                    "net": "VCC",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "4"
+                    }
+                },
+                "5": {
+                    "name": "CONT",
+                    "number": "5",
+                    "net": "$1N8",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "5"
+                    }
+                },
+                "6": {
+                    "name": "THRES",
+                    "number": "6",
+                    "net": "$1N13",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "6"
+                    }
+                },
+                "7": {
+                    "name": "DISCH",
+                    "number": "7",
+                    "net": "$1N6",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "7"
+                    }
+                },
+                "8": {
+                    "name": "VCC",
+                    "number": "8",
+                    "net": "VCC",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "8"
+                    }
+                }
+            }
+        },
+        "gge2": {
+            "props": {
+                "Unique ID": "gge2",
+                "Add into BOM": "yes",
+                "Convert to PCB": "yes",
+                "Device": "0cbcc05468e2650b",
+                "Footprint": "3c4ce7f09cdaf814",
+                "PCB Layer": "Default",
+                "Symbol": "46fb85da7ff45c56",
+                "Designator": "R1",
+                "LCSC Part Name": "10K",
+                "Supplier Part": "C9900011271",
+                "Manufacturer": "",
+                "Manufacturer Part": "10K",
+                "Supplier Footprint": "R0805",
+                "JLCPCB Part Class": "Extended Part",
+                "Datasheet": "",
+                "Supplier": "LCSC",
+                "3D Model": "37a81e68749a4138bd2dfa6897b24b85|0819f05c4eef4c71ace90d822a990e87",
+                "3D Model Title": "R0805_L2.0-W1.3-H0.6",
+                "3D Model Transform": "78.74,51.181,0,0,0,0,0,-0.0005,0",
+                "Name": "={Manufacturer Part}",
+                "Description": "",
+                "Reuse Block": "",
+                "Group ID": "",
+                "Channel ID": "$1I3",
+                "DeviceName": "10K",
+                "FootprintName": "R0805"
+            },
+            "altLibs": {
+                "devices": [],
+                "footprints": []
+            },
+            "pinInfoMap": {
+                "1": {
+                    "name": "1",
+                    "number": "1",
+                    "net": "$1N6",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "1"
+                    }
+                },
+                "2": {
+                    "name": "2",
+                    "number": "2",
+                    "net": "VCC",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "2"
+                    }
+                }
+            }
+        },
+        "gge3": {
+            "props": {
+                "Unique ID": "gge3",
+                "Add into BOM": "yes",
+                "Convert to PCB": "yes",
+                "Device": "b125876334bf5cf5",
+                "Footprint": "b96ec17322c4c12a",
+                "PCB Layer": "Default",
+                "Symbol": "58cc7fa7fa22c5ba",
+                "Designator": "C1",
+                "LCSC Part Name": "100nF ±10% 25V",
+                "Supplier Part": "C2167746",
+                "Manufacturer": "KEMET(基美)",
+                "Manufacturer Part": "C1206F104K3RACTU",
+                "Supplier Footprint": "1206",
+                "JLCPCB Part Class": "Extended Part",
+                "Datasheet": "https://atta.szlcsc.com/upload/public/pdf/source/20210401/0B3B2F0D5EDCB09695B17A4482A8DCD0.pdf",
+                "Supplier": "LCSC",
+                "3D Model": "e4be705b945545a48e666415e3682bd8|0819f05c4eef4c71ace90d822a990e87",
+                "3D Model Title": "C1206_L3.2-W1.6-H1.3",
+                "3D Model Transform": "125.984,62.992,0,0,0,0,0,0,0",
+                "Value": "100nF",
+                "Tolerance": "±10%",
+                "Voltage Rating": "25V",
+                "Temperature Coefficient": "X7R",
+                "Name": "={Value}",
+                "Description": "容值:100nF;精度:±10%;额定电压:25V;温度系数:X7R;",
+                "Reuse Block": "",
+                "Group ID": "",
+                "Channel ID": "$1I4",
+                "DeviceName": "C1206F104K3RACTU",
+                "FootprintName": "C1206"
+            },
+            "altLibs": {
+                "devices": [],
+                "footprints": []
+            },
+            "pinInfoMap": {
+                "1": {
+                    "name": "1",
+                    "number": "1",
+                    "net": "GND",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "1"
+                    }
+                },
+                "2": {
+                    "name": "2",
+                    "number": "2",
+                    "net": "$1N13",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "2"
+                    }
+                }
+            }
+        },
+        "gge4": {
+            "props": {
+                "Unique ID": "gge4",
+                "Add into BOM": "yes",
+                "Convert to PCB": "yes",
+                "Device": "e03812f8c0262174",
+                "Footprint": "86e69b003d5d12b6",
+                "PCB Layer": "Default",
+                "Symbol": "46fb2a92625c1f01",
+                "Designator": "R2",
+                "LCSC Part Name": "100k",
+                "Supplier Part": "C9900012835",
+                "Manufacturer": "",
+                "Manufacturer Part": "100k",
+                "Supplier Footprint": "R0603",
+                "JLCPCB Part Class": "Extended Part",
+                "Datasheet": "",
+                "Supplier": "LCSC",
+                "3D Model": "fc143cca1e79419f9cd78b61e9279f08|0819f05c4eef4c71ace90d822a990e87",
+                "3D Model Title": "R0603",
+                "3D Model Transform": "31.8897,63.7794,0,90,0,0,0,0,0",
+                "Name": "={Manufacturer Part}",
+                "Description": "",
+                "Reuse Block": "",
+                "Group ID": "",
+                "Channel ID": "$1I5",
+                "DeviceName": "100k",
+                "FootprintName": "R0603"
+            },
+            "altLibs": {
+                "devices": [],
+                "footprints": []
+            },
+            "pinInfoMap": {
+                "1": {
+                    "name": "1",
+                    "number": "1",
+                    "net": "$1N13",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "1"
+                    }
+                },
+                "2": {
+                    "name": "2",
+                    "number": "2",
+                    "net": "$1N6",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "2"
+                    }
+                }
+            }
+        },
+        "gge5": {
+            "props": {
+                "Unique ID": "gge5",
+                "Add into BOM": "yes",
+                "Convert to PCB": "yes",
+                "Device": "b125876334bf5cf5",
+                "Footprint": "b96ec17322c4c12a",
+                "PCB Layer": "Default",
+                "Symbol": "58cc7fa7fa22c5ba",
+                "Designator": "C2",
+                "LCSC Part Name": "100nF ±10% 25V",
+                "Supplier Part": "C2167746",
+                "Manufacturer": "KEMET(基美)",
+                "Manufacturer Part": "C1206F104K3RACTU",
+                "Supplier Footprint": "1206",
+                "JLCPCB Part Class": "Extended Part",
+                "Datasheet": "https://atta.szlcsc.com/upload/public/pdf/source/20210401/0B3B2F0D5EDCB09695B17A4482A8DCD0.pdf",
+                "Supplier": "LCSC",
+                "3D Model": "e4be705b945545a48e666415e3682bd8|0819f05c4eef4c71ace90d822a990e87",
+                "3D Model Title": "C1206_L3.2-W1.6-H1.3",
+                "3D Model Transform": "125.984,62.992,0,0,0,0,0,0,0",
+                "Value": "100nF",
+                "Tolerance": "±10%",
+                "Voltage Rating": "25V",
+                "Temperature Coefficient": "X7R",
+                "Name": "={Value}",
+                "Description": "容值:100nF;精度:±10%;额定电压:25V;温度系数:X7R;",
+                "Reuse Block": "",
+                "Group ID": "",
+                "Channel ID": "$1I6",
+                "DeviceName": "C1206F104K3RACTU",
+                "FootprintName": "C1206"
+            },
+            "altLibs": {
+                "devices": [],
+                "footprints": []
+            },
+            "pinInfoMap": {
+                "1": {
+                    "name": "1",
+                    "number": "1",
+                    "net": "GND",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "1"
+                    }
+                },
+                "2": {
+                    "name": "2",
+                    "number": "2",
+                    "net": "$1N8",
+                    "pinClass": "",
+                    "pinDifferentialPairClass": "",
+                    "props": {
+                        "Pin Number": "2"
+                    }
+                }
+            }
+        }
+    },
+    "designRule": {
+        "trackPhysics": {
+            "copperThickness1oz": {
+                "name": "copperThickness1oz",
+                "isDefault": true,
+                "unit": "mm",
+                "strokeValue": {
+                    "common": {
+                        "min": 0.127,
+                        "max": 2.54,
+                        "default": 0.254
+                    }
+                }
+            },
+            "copperThickness2oz": {
+                "name": "copperThickness2oz",
+                "isDefault": false,
+                "unit": "mm",
+                "strokeValue": {
+                    "common": {
+                        "min": 0.203,
+                        "max": 2.54,
+                        "default": 0.254
+                    }
+                }
+            }
+        },
+        "netRule": {
+            "VCC": {
+                "net": "VCC",
+                "ruleMap": {
+                    "TrackPhysics": ""
+                }
+            },
+            "GND": {
+                "net": "GND",
+                "ruleMap": {
+                    "TrackPhysics": ""
+                }
+            },
+            "$1N6": {
+                "net": "$1N6",
+                "ruleMap": {
+                    "TrackPhysics": ""
+                }
+            },
+            "$1N8": {
+                "net": "$1N8",
+                "ruleMap": {
+                    "TrackPhysics": ""
+                }
+            },
+            "$1N13": {
+                "net": "$1N13",
+                "ruleMap": {
+                    "TrackPhysics": ""
+                }
+            },
+            "OUT": {
+                "net": "OUT",
+                "ruleMap": {
+                    "TrackPhysics": ""
+                }
+            }
+        }
+    },
+    "differentialPair": {},
+    "netClass": {},
+    "equalLengthNetGroup": {},
+    "differentialPairGroups": {}
+}

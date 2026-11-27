@@ -1,0 +1,6 @@
+{
+  "_comment": "Per-case gate thresholds for scripts/eval.js. Keys are '<dir>/<file stem>' as eval prints them: test/fixtures/x → 'ai/x'. Cases are complete authored layouts (2.2.8+ contract); circuit-only recipes are not benchmarked.",
+  "_defaults": { "minLint": 85, "minDrc": 80, "maxSeconds": 20 },
+  "ai/ai-resistor-link": { "minLint": 100, "minDrc": 100, "maxSeconds": 10 },
+  "ai/blink": { "minLint": 100, "minDrc": 95, "maxSeconds": 10 }
+}

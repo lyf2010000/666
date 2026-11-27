@@ -1,0 +1,201 @@
+# The legal / illegal corpus (`test/corpus.js`)
+
+`test/smoke.js` proves the primitives still build a well-formed project; the
+**corpus** proves the gates tell legal from illegal. It is a declarative test
+set of whole projects, split in two halves:
+
+* **legal** — projects every gate must **accept** (0 `validate` errors, and for
+  generated ones 0 `erc` errors). Without these witnesses a checker that simply
+  reported everything would pass the illegal half.
+* **illegal** — a copy of a legal baseline with **one minimal tampering**, plus
+  the `expect` that names which gate must report which code.
+
+```bash
+node test/corpus.js              # also: npm run test:corpus (part of npm test)
+node test/corpus.js --probe      # print what each gate ACTUALLY reports, assert nothing
+node test/corpus.js --only pour  # only variants whose name contains "pour"
+```
+
+Output style matches `test/smoke.js`: `ok` / `FAIL` lines, then
+`N/M checks passed`; exit 1 on any failure.
+
+## Files
+
+| file | contents |
+| --- | --- |
+| `test/corpus.js` | runner: builds/copies baselines, applies mutations, calls the gates, asserts |
+| `test/corpus/legal.json` | the legal projects (also the clone sources for variants) |
+| `test/corpus/format.json` | illegal variants: structure, encoding, references, folder layout |
+| `test/corpus/electrical.json` | illegal variants: nets, pads, designators, copper |
+| `test/corpus/client.json` | illegal variants cloned from the committed **client-authored** project |
+
+Everything happens under `os.tmpdir()` and is deleted on exit; the repository is
+never written to (`--probe` keeps the temp tree and prints its path so you can
+open a mutated project by hand).
+
+## Baselines
+
+A legal entry is either generated
+
+```json
+{ "name": "build/blink", "key": "blink", "build": "test/fixtures/blink.json" }
+```
+
+in which case `scripts/build.js` produces it into a temp dir and the run asserts
+the build exits 0 with a clean format and electrical report — or committed:
+
+```json
+{ "name": "committed/client-sample", "key": "client",
+  "dir": "<a client-saved project>", "formatOnly": true }
+```
+
+`formatOnly` marks a project this skill did not author. The **format** gate must
+still accept it; its circuit is out of scope, so lint/DRC findings are printed
+but not asserted. ERC is asserted in one direction only: the client-authored
+sample doubles as the **pin-attachment anchor** — its human-drawn wires land
+exactly on the pin record points, so the netlist must read every pin connected
+(before 1.16.0 a wrong tip formula misread 12 of 16 pins as unconnected, which
+was mis-reported as "unconnected by design"). Committed projects are copied
+before any variant touches them.
+
+`key` is what an illegal variant refers to with `"base"`.
+
+**Copper on the baselines.** Legacy mutation fixtures were written for copper-free boards. The default authored-layout regression lives in `test/pipeline.js`.
+so a generated baseline's PCB carries footprints and pad-net links only. The
+copper variants (POUR geometry in `format.json`, the erased/retagged tracks in
+`electrical.json`) would then tamper with nothing — to keep those `expect`s
+(D001/D004 and the POUR validate rules) non-vacuous, the corpus runner injects
+copper through its built-in `copper_prep` step: before the mutation is applied,
+a deterministic set of LINE/VIA/POUR records is written into the *copy*, exactly
+as a client-routed project would have them. `copper_prep` is test tooling, not a
+skill capability — the shipped product still has no routing or pouring.
+
+## Illegal variant shape
+
+```json
+{
+  "name": "pour-flat-path",
+  "base": "blink",
+  "category": "pour geometry",
+  "title": "POUR path loses its nesting",
+  "mutate": "replace POUR1's nested path with a flat one",
+  "mutation": [{ "op": "record_set", "target": "pcb",
+                 "sel": { "doc": "main", "type": "POUR", "nth": 0 },
+                 "set": { "body.path": ["R", 24, 976, 1552, 952] } }],
+  "expect": { "validate": ["path must be an array of polygon arrays"] }
+}
+```
+
+`mutation` is a list of steps applied to the copy, in order. A step that matches
+nothing is a **failure** (`mutation actually applied`): a silent no-op would make
+the item pass for the wrong reason.
+
+### targets
+
+`index` (the `.eprj3` file) · `ecfg` · `sheet` (first `.esch2`) · `pcb` (first
+`.epcb2`) · `panel` (first `.epan2`) · `schDir` · `panelDir` · `root`. They are
+resolved from the **pristine** baseline, so a variant can still find its files
+after its own index has been destroyed.
+
+### selectors (`sel`)
+
+| key | meaning |
+| --- | --- |
+| `doc` | `"main"` (default = last doc of the container), `"any"`, or a docType string (`SYMBOL`, `DEVICE`, `SCH_PAGE`, `PCB`, `SCH`, …) |
+| `type` | record head type |
+| `key` | `ATTR` body key |
+| `where` | dotted record paths that must compare equal, e.g. `{ "body.padNet": "V_LED" }`, `{ "id": "[\"NET\",\"\"]" }` |
+| `idStartsWith` | head id prefix, e.g. `["PAD_NET",` |
+| `byDesignator` | resolve the component that owns this `Designator` value and match records by **its** head id |
+| `nth` / `all` | which match to take (default: the first) |
+
+Never hard-code a record id: ids and uuids are random on every build. Select by
+`where` / `byDesignator` — stable content such as a refdes or a net name.
+
+### ops
+
+| op | step fields | effect |
+| --- | --- | --- |
+| `json_delete` / `json_set` | `target`, `path`, `value` | edit the index (or any JSON target) by dotted path |
+| `json_raw` | `target`, `content` | overwrite a file with literal bytes |
+| `raw_append` | `target`, `lines[]` | append raw record lines |
+| `record_set` / `record_unset` | `target`, `sel`, `set{}` / `keys[]` | edit dotted paths (`head.id`, `body.value`, …) of matching records |
+| `record_remove` | `target`, `sel` | delete matching records |
+| `record_dup` | `target`, `sel` | copy a record verbatim to end of file (same ticket) |
+| `ticket_swap_tail` | `target` | swap the tickets of the last two records of the main doc |
+| `doc_uuid_duplicate` | `target`, `source`, `into` | copy one doc's uuid onto another doc |
+| `wire_remove` | `target`, `sel` (a `NET` attr) | delete that wire, its `LINE`s and its attrs |
+| `line_remove_of_net` | `target`, `net` | delete one `LINE` segment of the wire labelled `net` |
+| `component_remove` | `target`, `designator` | delete a component with its attrs and `PAD_NET`s |
+| `component_move` | `target`, `designator`, `dx`, `dy` | shift a component off its coordinates |
+| `line_skew` | `target`, `sel`, `dx`, `dy` | bend one wire segment off the orthogonal grid |
+| `remove_net_copper` | `target`, `net` | delete all tracks + vias of a net |
+| `stray_file` | `target`(dir), `name`, `content` | create an extra file |
+| `file_delete` | `target` | remove a file |
+
+### expect
+
+| key | matched against |
+| --- | --- |
+| `validate` / `validateWarnings` | substrings of `validate.js` error / warning messages (the format gate has **no codes** — see `docs/checks.md`) |
+| `erc` / `ercWarnings` | ERC finding ids (`E000`–`E007`, `W001`–`W003`) — or a fragment of the message |
+| `lint` / `drc` | finding codes (`L0xx`, `D0xx`) |
+| `leak: true` | recorded **blind spot**: nothing is expected to report it. Prints, never fails |
+| `crash: ["validate", …]` | recorded **robustness gap**: those gates throw instead of reporting a finding. Prints, never fails |
+| `blindTo: ["validate", …]` | documentation on a caught item: another gate found it, these did not |
+
+All four gates (`validate`, `erc`, `lint-layout`, `drc`) run **in process** on
+every variant, and every one of them is wrapped: a checker that throws is
+reported as a crash, never as a pass. ERC is always given the baseline's design
+file, so `E003` (built netlist ≠ design intent) is part of the comparison.
+
+## Adding a variant
+
+1. Write the `mutation` and a **guess** for `expect`.
+2. `node test/corpus.js --only <name> --probe` — read what the gates really
+   report (validate messages, ERC ids, lint/DRC codes, crashes).
+3. Paste the real values into `expect`. Never invent a code: `validate` has no
+   codes, so it quotes message substrings; `E00x` / `L0xx` / `D0xx` must exist in
+   `scripts/lib/erc.js`, `scripts/lib/lint.js`, `scripts/lib/drc.js`.
+4. `node test/corpus.js` — the run also checks that the expectation was **not**
+   already true on the untouched baseline. An `expect` that the pristine project
+   already satisfies is rejected as *vacuous*, because it would pass whether or
+   not the tampering worked.
+5. If nothing at all reports it, keep the variant with `expect.leak = true` and a
+   `suggest` naming the rule a future checker should grow — that is how a blind
+   spot becomes tracked work instead of a forgotten one. When a rule is added,
+   the run prints `recorded gap looks closed` and you move the item to a real
+   `expect`.
+
+Cascade findings are listed too: renaming a power flag's net breaks both `E003`
+(netlist ≠ design) and `E006` (board ≠ schematic), and the manifest says so.
+Declare what actually happens, not just the interesting part.
+
+## Recorded gaps as of today
+
+The run prints these under `recorded gaps`; they are assertions-free on purpose.
+
+| item | gate | what is missing |
+| --- | --- | --- |
+| `schematic-wire-segment-dropped` | all four | deleting a segment of a multi-segment wire removes copper-equivalent drawing while the net still connects — connectivity-only reasoning cannot see it |
+| `ticket-regression` | none — by design | tickets running backwards within a doc is LEGAL V4 (real client sheets contain hundreds of them); the variant documents why no gate may fire |
+
+Everything else the corpus once had to record as blind is **closed** in
+`scripts/lib/checks.js` (and its manifest entry moved to a real `expect`):
+
+| was | now | level |
+| --- | --- | --- |
+| stray `||` silently losing a body | "record body is not valid JSON" | error |
+| tickets unique but unordered | **no order rule** (1.12): record tickets are per-atom clocks — real saves repeat them across different ids (all FONT rows share ticket 1) and run backwards by the hundred (813 in the official quick-start). What remains is `(ticket, id)` **pair** uniqueness: a copied/torn line repeats both | error (pair only) |
+| foreign `DOCHEAD.client` | "DOCHEAD client mismatch on N doc(s)…" — aggregated one line per file; warning because genuine merged client projects legitimately differ | warning |
+| dangling `ATTR.parentId` | "parentId … references nothing in the document" — resolved across the whole container file (cross-doc element ids are legal) with the instance-path form `eNNNN(-ie)NNN…` exempt (NO_CONNECT pin flags) | error |
+| `COMPONENT`/`WIRE` head without `id` | "head has no id" | error |
+| zero-byte container crashing the gates | "document file has no DOCHEAD records" + `netlist/drc/pins` stubs that degrade to findings instead of throwing | error |
+
+The warning-vs-error choice is empirical, not taste: the calibration set was
+the two real client-saved projects on the maintainers' disk (quick-start,
+H610) plus the repo's former `examples/eprj3-example` — **all must validate with
+0 errors** — and every error-level rule above stays silent on all of them. The
+committed client samples left the repo in 2.2.10; the calibrated rules stand,
+and a fresh client-saved project can be dropped in as a `formatOnly` entry to
+re-check them.

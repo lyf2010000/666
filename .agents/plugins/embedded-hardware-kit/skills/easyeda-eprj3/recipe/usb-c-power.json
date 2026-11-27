@@ -1,0 +1,141 @@
+{
+  "name": "usb-c-power",
+  "board": {
+    "width": 1800,
+    "height": 1000
+  },
+  "sheet": {
+    "schematic": "Schematic1",
+    "name": "P1"
+  },
+  "powers": {
+    "VBUS": "up",
+    "GND": "down"
+  },
+  "blocks": [
+    {
+      "title": "USB-C RECEPTACLE + CC",
+      "parts": [
+        "U1",
+        "C1",
+        "R1",
+        "R2"
+      ]
+    }
+  ],
+  "parts": [
+    {
+      "id": "U1",
+      "symbol": {
+        "name": "USB_C_PWR",
+        "designator": "J",
+        "pitch": 30,
+        "pins": [
+          "A4B9:VBUS",
+          "B4A9:VBUS",
+          "A1B12:GND",
+          "B1A12:GND",
+          "A5:CC1",
+          "B5:CC2"
+        ]
+      },
+      "footprint": {
+        "name": "USB-C_SMD-TYPE-C-31-M-12_1_PWR",
+        "designator": "J",
+        "pads": [
+          [
+            "A4B9",
+            -94.5,
+            -97.4,
+            23.6,
+            51.2
+          ],
+          [
+            "A1B12",
+            -126,
+            -97.4,
+            23.6,
+            51.2
+          ],
+          [
+            "A5",
+            -49.2,
+            -97.4,
+            11.8,
+            51.2
+          ],
+          [
+            "B5",
+            68.9,
+            -97.4,
+            11.8,
+            51.2
+          ],
+          [
+            "B4A9",
+            94.5,
+            -97.4,
+            23.6,
+            51.2
+          ],
+          [
+            "B1A12",
+            126,
+            -97.4,
+            23.6,
+            51.2
+          ]
+        ],
+        "outline": [
+          -194,
+          -123,
+          194,
+          123
+        ]
+      },
+      "name": "USB_C",
+      "value": "USB-C 16P",
+      "pins": {
+        "A4B9": "VBUS",
+        "B4A9": "VBUS",
+        "A1B12": "GND",
+        "B1A12": "GND",
+        "A5": "CC1",
+        "B5": "CC2"
+      }
+    },
+    {
+      "id": "C1",
+      "symbol": "CAP",
+      "footprint": "C0603",
+      "value": "10uF",
+      "pins": {
+        "1": "VBUS",
+        "2": "GND"
+      }
+    },
+    {
+      "id": "R1",
+      "symbol": "RES",
+      "footprint": "R0603",
+      "value": "5.1k",
+      "pins": {
+        "1": "CC1",
+        "2": "GND"
+      }
+    },
+    {
+      "id": "R2",
+      "symbol": "RES",
+      "footprint": "R0603",
+      "value": "5.1k",
+      "pins": {
+        "1": "CC2",
+        "2": "GND"
+      }
+    }
+  ],
+  "expect": {
+    "decoupling": true
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "params": {
+    "cin": "10uF",
+    "cout": "10uF",
+    "byp": "10nF"
+  },
+  "name": "ldo-3v3",
+  "board": {
+    "width": 1200,
+    "height": 800
+  },
+  "sheet": {
+    "schematic": "Schematic1",
+    "name": "P1"
+  },
+  "powers": {
+    "VIN": "up",
+    "GND": "down",
+    "3V3": "up"
+  },
+  "blocks": [
+    {
+      "title": "LDO 3V3 REGULATOR",
+      "parts": [
+        "C1",
+        "U1",
+        "C3"
+      ]
+    },
+    {
+      "title": "OUTPUT BULK",
+      "parts": [
+        "C2"
+      ]
+    }
+  ],
+  "parts": [
+    {
+      "id": "C1",
+      "symbol": "CAP",
+      "footprint": "C0603",
+      "value": "${cin}",
+      "pins": {
+        "1": "VIN",
+        "2": "GND"
+      }
+    },
+    {
+      "id": "U1",
+      "symbol": {
+        "name": "LDO_SOT23_5",
+        "designator": "U",
+        "pitch": 30,
+        "pins": [
+          "1:VIN",
+          "2:GND",
+          "3:EN",
+          "4:BYP",
+          "5:VOUT"
+        ]
+      },
+      "footprint": {
+        "name": "SOT23_5",
+        "designator": "U",
+        "pads": [
+          [1, -45.4, 37.4, 45.6, 19.3],
+          [2, -45.4, 0, 45.6, 19.3],
+          [3, -45.4, -37.4, 45.6, 19.3],
+          [4, 45.4, -37.4, 45.6, 19.3],
+          [5, 45.4, 37.4, 45.6, 19.3]
+        ],
+        "outline": [
+          -83,
+          -62,
+          83,
+          62
+        ]
+      },
+      "name": "LDO_3V3",
+      "value": "3V3/300mA",
+      "pins": {
+        "1": "VIN",
+        "2": "GND",
+        "3": "VIN",
+        "4": "LDO_BYP",
+        "5": "3V3"
+      }
+    },
+    {
+      "id": "C3",
+      "symbol": "CAP",
+      "footprint": "C0402",
+      "value": "${byp}",
+      "pins": {
+        "1": "LDO_BYP",
+        "2": "GND"
+      }
+    },
+    {
+      "id": "C2",
+      "symbol": "CAP",
+      "footprint": "C0603",
+      "value": "${cout}",
+      "pins": {
+        "1": "3V3",
+        "2": "GND"
+      }
+    }
+  ],
+  "expect": {
+    "decoupling": true
+  }
+}
