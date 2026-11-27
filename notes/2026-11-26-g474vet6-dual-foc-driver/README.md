@@ -141,22 +141,5 @@
 
 ---
 
-## 7. 原理图 / PCB 图纸与 STM32CubeMX 引脚核对
-
-- **STM32CubeMX 工程文件**：[`CubeMX/G474_Dual_FOC.ioc`](./CubeMX/G474_Dual_FOC.ioc)（已对照 `STM32G474V(B-C-E)Tx.xml` 官方数据库完成 100 脚零冲突校验）
-- **核对补充说明**：
-  1. `PB10 / PB11` 在 STM32G474 上仅支持 `USART3 / LPUART1 / TIM2`，不支持 `I2C2`（`I2C2` 由 `PA8/PA9` 提供），本文与图纸均已修正。
-  2. 电机 2 电流采样 `PB0 (ADC3_IN12)` 与 `PB1 (ADC3_IN1)` 共用 `ADC3`（顺序采样间隔约 0.3µs，20kHz FOC 可用）；如需与电机 1 一样双 ADC 严格同步，可将其中一相换至 `PE14 (ADC4_IN1)` / `PE15 (ADC4_IN2)`。
-
-### 7.1 STM32CubeMX 全引脚核对图（LQFP-100）
-![STM32CubeMX 全引脚核对图](./images/01_CubeMX_STM32G474VET6_Pinout.png)
-
-### 7.2 原理图 Sheet 1：主控 MCU / 电源树 / 通信 / 扩展排针
-![原理图 Sheet 1](./images/02_Schematic_Sheet1_MCU_Power_Comms.png)
-
-### 7.3 原理图 Sheet 2：双路 FOC 功率驱动级（DRV8320S + 三相桥 + INA240）
-![原理图 Sheet 2](./images/03_Schematic_Sheet2_Dual_FOC_PowerStage.png)
-
-### 7.4 四层 2oz PCB 布局、关键走线与叠层规划图
-![四层 2oz PCB 布局与叠层规划图](./images/04_PCB_4Layer_Layout_and_Stackup.png)
+> **后续图纸与 CubeMX 工程**：已独立归档至 [`2026-11-27-g474vet6-dual-foc-schematic-pcb`](../2026-11-27-g474vet6-dual-foc-schematic-pcb/README.md)。
 
